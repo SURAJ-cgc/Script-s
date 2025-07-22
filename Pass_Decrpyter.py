@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from Crypto.Cipher import DES3
-from base64 import b64decode, binascii
+from base64 import b64decode, b64encode
 import sys
-import re
+import os
 
 def decrypt_password(encrypted_password: str, key: bytes) -> str:
     """Decrypt a base64-encoded DES3-CBC encrypted password."""
@@ -18,99 +18,205 @@ def decrypt_password(encrypted_password: str, key: bytes) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-def validate_base64(s: str) -> bool:
-    """Validate if string is valid base64."""
+def encrypt_password(password: str, key: bytes) -> str:
+    """Encrypt a password using DES3-CBC."""
     try:
-        b64decode(s)
-        return True
-    except (binascii.Error, ValueError):
-        return False
+        # Generate random 8-byte IV
+        iv = os.urandom(8)
+        
+        # Prepare password with PKCS7-like padding
+        password_bytes = password.encode('utf-8')
+        block_size = 8
+        padding_length = block_size - (len(password_bytes) % block_size)
+        padded_password = password_bytes + (bytes([padding_length]) * padding_length)
+        
+        # Encrypt
+        cipher = DES3.new(key, DES3.MODE_CBC, iv=iv)
+        ciphertext = cipher.encrypt(padded_password)
+        
+        # Combine IV + ciphertext and encode as base64
+        encrypted_data = iv + ciphertext
+        return b64encode(encrypted_data).decode('utf-8')
+        
+    except Exception as e:
+        return f"Encryption Error: {str(e)}"
 
-def get_decrypt_key() -> bytes:
-    """Get and validate decrypt key from user."""
-    while True:
-        decrypt_key = input("\n[1] Enter your decrypt key: ").strip()
+def decrypt_password_pkcs7(encrypted_password: str, key: bytes) -> str:
+    """Decrypt with proper PKCS7 padding removal."""
+    try:
+        data = b64decode(encrypted_password)
+        iv, ciphertext = data[:8], data[8:]
         
-        if not decrypt_key:
-            print("❌ Error: Decrypt key cannot be empty! Please try again.")
-            continue
+        cipher = DES3.new(key, DES3.MODE_CBC, iv=iv)
+        decrypted = cipher.decrypt(ciphertext)
         
-        key_bytes = decrypt_key.encode('utf-8')
-        
-        # Handle key length for DES3
-        if len(key_bytes) == 24:
-            print("✅ Perfect! 24-byte key detected.")
-            return key_bytes
-        elif len(key_bytes) < 24:
-            key_bytes = key_bytes.ljust(24, b'\0')
-            print(f"🔧 Key padded from {len(decrypt_key.encode('utf-8'))} to 24 bytes.")
-            return key_bytes
+        # Remove PKCS7 padding
+        padding_length = decrypted[-1]
+        if padding_length <= 8:
+            decrypted = decrypted[:-padding_length]
         else:
-            key_bytes = key_bytes[:24]
-            print(f"🔧 Key truncated from {len(decrypt_key.encode('utf-8'))} to 24 bytes.")
-            return key_bytes
+            # Fallback to null byte removal
+            decrypted = decrypted.rstrip(b"\0")
+        
+        return decrypted.decode('utf-8', errors='ignore')
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-def get_encrypted_password() -> str:
-    """Get and validate encrypted password from user."""
-    while True:
-        encrypted_password = input("\n[2] Enter the encrypted password (base64): ").strip()
+def create_real_example():
+    """Create a real working example."""
+    print("\n" + "🔧" * 25 + " CREATING REAL EXAMPLE " + "🔧" * 25)
+    
+    original_password = "hello_you_got-it"
+    example_key = "my_secret_key_123456789!"  # 24 bytes
+    
+    key_bytes = example_key.encode('utf-8')
+    
+    print(f"\n📝 Creating real encrypted example...")
+    print(f"├─ Password: '{original_password}'")
+    print(f"├─ Key: '{example_key}' ({len(key_bytes)} bytes)")
+    
+    # Create real encrypted version
+    encrypted = encrypt_password(original_password, key_bytes)
+    
+    print(f"└─ Encrypted: {encrypted}")
+    
+    # Test both decryption methods
+    print(f"\n🧪 Testing decryption...")
+    result1 = decrypt_password(encrypted, key_bytes)
+    result2 = decrypt_password_pkcs7(encrypted, key_bytes)
+    
+    print(f"├─ Method 1 (null padding): '{result1}'")
+    print(f"└─ Method 2 (PKCS7 padding): '{result2}'")
+    
+    if result2 == original_password:
+        print("✅ SUCCESS! PKCS7 method works!")
+        return example_key, encrypted, "pkcs7"
+    elif result1 == original_password:
+        print("✅ SUCCESS! Null padding method works!")
+        return example_key, encrypted, "null"
+    else:
+        print("❌ Both methods failed. Let's try with null padding encryption...")
         
-        if not encrypted_password:
-            print("❌ Error: Encrypted password cannot be empty! Please try again.")
-            continue
+        # Try with null padding encryption
+        encrypted_null = encrypt_with_null_padding(original_password, key_bytes)
+        result_null = decrypt_password(encrypted_null, key_bytes)
         
-        if not validate_base64(encrypted_password):
-            print("❌ Error: Invalid base64 format! Please check your input and try again.")
-            continue
+        print(f"\n🔄 Trying null padding encryption...")
+        print(f"├─ Encrypted (null): {encrypted_null}")
+        print(f"└─ Decrypted: '{result_null}'")
         
-        print("✅ Valid base64 format detected.")
-        return encrypted_password
+        if result_null == original_password:
+            print("✅ SUCCESS! Null padding method works!")
+            return example_key, encrypted_null, "null"
+    
+    return None, None, None
+
+def encrypt_with_null_padding(password: str, key: bytes) -> str:
+    """Encrypt with null byte padding (simpler method)."""
+    try:
+        iv = os.urandom(8)
+        
+        password_bytes = password.encode('utf-8')
+        # Pad to multiple of 8 bytes with null bytes
+        padding_length = 8 - (len(password_bytes) % 8)
+        if padding_length == 8:
+            padding_length = 0
+        padded_password = password_bytes + (b'\0' * padding_length)
+        
+        cipher = DES3.new(key, DES3.MODE_CBC, iv=iv)
+        ciphertext = cipher.encrypt(padded_password)
+        
+        encrypted_data = iv + ciphertext
+        return b64encode(encrypted_data).decode('utf-8')
+        
+    except Exception as e:
+        return f"Encryption Error: {str(e)}"
 
 def main():
-    """Main interactive function."""
+    """Main function with real example."""
     try:
-        print("=" * 55)
-        print("        🔓 DES3-CBC Password Decryption Tool 🔓")
-        print("=" * 55)
+        print("=" * 75)
+        print("            🔓 DES3-CBC Password Decryption Tool 🔓")
+        print("=" * 75)
         
-        # Get user inputs with validation
-        key_bytes = get_decrypt_key()
-        encrypted_password = get_encrypted_password()
+        print("\n1️⃣  Choose an option:")
+        print("   [1] Generate and test a real working example")
+        print("   [2] Enter your own decrypt key and encrypted password")
         
-        print("\n" + "=" * 55)
-        print("        🔄 Processing Decryption...")
-        print("=" * 55)
+        choice = input("\nEnter choice (1 or 2): ").strip()
         
-        # Perform decryption
-        result = decrypt_password(encrypted_password, key_bytes)
-        
-        # Display results
-        print(f"\n📊 Decryption Summary:")
-        print("─" * 40)
-        print(f"🔑 Key Used: {key_bytes.decode('utf-8', errors='ignore')}")
-        print(f"🔒 Encrypted: {encrypted_password}")
-        print(f"🔓 Result: {result}")
-        print("─" * 40)
-        
-        if result.startswith("Error:"):
-            print(f"\n❌ Decryption Failed!")
-            print(f" [-]  Reason: {result}")
-        else:
-            print(f"\n✅ Decryption Successful!")
-            print(f" [+] Your  Password: '{result}'")
+        if choice == "1":
+            example_key, encrypted, method = create_real_example()
             
-        # Ask if user wants to try again
-        again = input(f"\n🔄 Do you want to decrypt another password? (y/n): ").lower()
-        if again in ['y', 'yes']:
-            print("\n" + "="*55)
-            main()  # Recursive call for another round
-            
-    except KeyboardInterrupt:
-        print(f"\n\n⏹️  Operation cancelled by user. Goodbye!")
-        sys.exit(0)
+            if example_key and encrypted:
+                print(f"\n" + "="*75)
+                print("                        📋 COPY THESE VALUES 📋")
+                print("="*75)
+                print(f"🔑 Decrypt Key: {example_key}")
+                print(f"🔒 Encrypted Password: {encrypted}")
+                print(f"🔧 Method: {method}")
+                print("="*75)
+                
+                test_now = input("\nTest decryption now? (y/n): ").lower()
+                if test_now in ['y', 'yes']:
+                    key_bytes = example_key.encode('utf-8')
+                    
+                    if method == "pkcs7":
+                        result = decrypt_password_pkcs7(encrypted, key_bytes)
+                    else:
+                        result = decrypt_password(encrypted, key_bytes)
+                    
+                    print(f"\n🔓 Decrypted: '{result}'")
+                    if result == "hello_you_got-it":
+                        print("🎉 PERFECT! The example works!")
+                    else:
+                        print("❌ Something's still wrong...")
+                
+                return
+            else:
+                print("❌ Failed to create working example")
+                return
+        
+        # Manual input mode
+        print(f"\n📝 Manual Input Mode:")
+        
+        while True:
+            decrypt_key = input("\n[1] Enter your decrypt key: ").strip()
+            if decrypt_key:
+                break
+            print("❌ Key cannot be empty!")
+        
+        key_bytes = decrypt_key.encode('utf-8')
+        if len(key_bytes) < 24:
+            key_bytes = key_bytes.ljust(24, b'\0')
+            print(f"🔧 Key padded to 24 bytes")
+        elif len(key_bytes) > 24:
+            key_bytes = key_bytes[:24]
+            print(f"🔧 Key truncated to 24 bytes")
+        
+        while True:
+            encrypted_password = input("\n[2] Enter encrypted password: ").strip()
+            if encrypted_password:
+                break
+            print("❌ Encrypted password cannot be empty!")
+        
+        print(f"\n" + "="*75)
+        print("                        🔄 DECRYPTING...")
+        print("="*75)
+        
+        # Try both methods
+        result1 = decrypt_password(encrypted_password, key_bytes)
+        result2 = decrypt_password_pkcs7(encrypted_password, key_bytes)
+        
+        print(f"\n📊 Results:")
+        print(f"├─ Method 1 (null padding): '{result1}'")
+        print(f"└─ Method 2 (PKCS7 padding): '{result2}'")
+        
+        print(f"\n🎯 Most likely result: '{result2 if not result2.startswith('Error') else result1}'")
+        
     except Exception as e:
-        print(f"\n❌ Unexpected error: {str(e)}")
-        sys.exit(1)
+        print(f"\n❌ Error: {str(e)}")
 
 if __name__ == "__main__":
     main()
